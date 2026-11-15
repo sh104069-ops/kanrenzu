@@ -1,1 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>課題関連図（流れ図）作成ツール｜自立活動 6区分27項目</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 
+<header class="app-header">
+  <div class="brand">
+    <h1>課題関連図（流れ図）作成ツール</h1>
+    <span class="sub">特別支援学校　自立活動 6区分27項目対応</span>
+  </div>
+  <div class="toolbar">
+    <span class="save-status" id="saveStatus"></span>
+    <button type="button" id="btnNew">新規作成</button>
+    <button type="button" id="btnSample">サンプル</button>
+    <button type="button" id="btnSaveJson">データ保存</button>
+    <label class="btn" for="fileJson">データ読込</label>
+    <input type="file" id="fileJson" accept=".json,application/json" hidden>
+    <button type="button" id="btnPrint">印刷</button>
+    <button type="button" id="btnExcel" class="primary">Excel出力</button>
+  </div>
+</header>
+
+<div class="hintbar" id="hintbar"></div>
+
+<details class="panel student" open>
+  <summary>児童生徒の情報</summary>
+  <div class="student-grid">
+    <label>氏名<input type="text" data-field="name" placeholder="例）甲府 太郎"></label>
+    <label>学部・学年・組<input type="text" data-field="grade" placeholder="例）中学部2年④組"></label>
+    <label>作成日<input type="date" data-field="date"></label>
+    <label>作成者<input type="text" data-field="author" placeholder="担当者名"></label>
+    <label class="wide">障害の状態・診断名等<textarea data-field="disability" rows="2"></textarea></label>
+    <label class="half">本人の願い<textarea data-field="wishSelf" rows="2"></textarea></label>
+    <label class="half">保護者の願い<textarea data-field="wishParent" rows="2"></textarea></label>
+    <label class="wide">配慮事項・備考<textarea data-field="memo" rows="2"></textarea></label>
+  </div>
+</details>
+
+<div class="steps">
+  <span><b>①</b> 実態を付箋で貼る</span>
+  <span><b>②</b> 付箋の「★」で課題を取り出す</span>
+  <span><b>③</b> 課題をタップして選択 → 実態・項目・教科等をタップして線でつなぐ</span>
+  <span><b>④</b> 最重点目標を書いてExcel出力</span>
+</div>
+
+<div class="board-scroll">
+  <main class="board" id="board">
+    <svg id="lines" aria-hidden="true"></svg>
+
+    <section class="col col-jittai">
+      <h2 class="col-title"><span class="no">1</span>実態把握</h2>
+      <div id="catList"></div>
+    </section>
+
+    <section class="col col-kadai">
+      <h2 class="col-title"><span class="no">2</span>課題の抽出・関連づけ</h2>
+
+      <div class="goal" data-node="goal" id="goalBox">
+        <div class="goal-head">
+          <span>◎ 最重点目標</span>
+          <span class="sp"></span>
+          <span id="goalLinkArea"></span>
+        </div>
+        <textarea data-goal="text" rows="3" placeholder="課題の関連から導いた最重点目標を記入"></textarea>
+        <div class="goal-sub">設定の理由（課題同士の関連・中心的な課題）</div>
+        <textarea data-goal="reason" rows="2" placeholder="例）課題1と課題2の両方の基盤となるため…"></textarea>
+        <div class="goal-linked" id="goalLinked"></div>
+      </div>
+
+      <div id="issueList"></div>
+      <button type="button" class="add-issue" data-act="addIssue">＋ 課題を直接追加</button>
+    </section>
+
+    <section class="col col-items">
+      <h2 class="col-title"><span class="no">3</span>指導内容（自立活動・教科等）</h2>
+      <div class="sub-title">自立活動 6区分27項目</div>
+      <div id="itemList"></div>
+      <div class="sub-title subj-title">
+        <span>教科・領域・活動</span>
+        <button type="button" class="mini" data-act="addSubj">＋追加</button>
+      </div>
+      <div id="subjList"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="app-footer">
+  データはこの端末のブラウザ内にのみ自動保存されます（サーバーには送信されません）。共用端末では作業後に「データ保存」でファイルに保存し、「新規作成」で消去してください。
+</footer>
+
+<dialog id="editDlg">
+  <form id="editForm">
+    <h3 id="dlgTitle">編集</h3>
+    <textarea id="dlgText" rows="4"></textarea>
+    <div id="dlgColors" class="colors"></div>
+    <div class="dlg-btns">
+      <button type="button" id="dlgDelete" class="danger">削除</button>
+      <span class="sp"></span>
+      <button type="button" id="dlgCancel">キャンセル</button>
+      <button type="submit" class="primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
