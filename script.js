@@ -307,9 +307,21 @@ function initApp() {
 
   /* ---------- 線の描画 ---------- */
   function drawLines() {
-    const br = board.getBoundingClientRect();
     svg.setAttribute('width', board.scrollWidth);
     svg.setAttribute('height', board.scrollHeight);
+    const out = [];
+    linkGeoms().forEach(g => {
+      const op = g.active ? 0.85 : 0.12;
+      const [x1, y1, a, b, c, d, x2, y2] = g.pts;
+      out.push(`<path d="M${x1},${y1} C${a},${b} ${c},${d} ${x2},${y2}" stroke="${g.color}" stroke-width="${g.active && selected ? 3.2 : 2.2}" opacity="${op}"${g.dashed ? ' stroke-dasharray="6 5"' : ''}/>`);
+      [[x1, y1], [x2, y2]].forEach(([x, y]) => out.push(`<circle cx="${x}" cy="${y}" r="3.5" fill="${g.color}" opacity="${op}"/>`));
+    });
+    svg.innerHTML = out.join('');
+  }
+
+  /* 線の座標を計算（画面表示とExcel出力で共用） */
+  function linkGeoms() {
+    const br = board.getBoundingClientRect();
     const cache = {};
     const rect = key => {
       if (key in cache) return cache[key];
@@ -323,21 +335,16 @@ function initApp() {
     };
     const across = (a, b) => {
       const x1 = a.r, y1 = a.cy, x2 = b.l, y2 = b.cy, dx = Math.max(30, (x2 - x1) / 2);
-      return { d: `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`, p: [[x1, y1], [x2, y2]] };
+      return [x1, y1, x1 + dx, y1, x2 - dx, y2, x2, y2];
     };
     const side = (a, b, dir) => {
       const x1 = dir > 0 ? a.r : a.l, x2 = dir > 0 ? b.r : b.l, y1 = a.cy, y2 = b.cy;
       const bow = dir * Math.min(62, 22 + Math.abs(y2 - y1) * 0.12);
-      return { d: `M${x1},${y1} C${x1 + bow},${y1} ${x2 + bow},${y2} ${x2},${y2}`, p: [[x1, y1], [x2, y2]] };
+      return [x1, y1, x1 + bow, y1, x2 + bow, y2, x2, y2];
     };
 
     const out = [];
-    const add = (geo, color, active, dashed) => {
-      if (!geo) return;
-      const op = active ? 0.85 : 0.12;
-      out.push(`<path d="${geo.d}" stroke="${color}" stroke-width="${active && selected ? 3.2 : 2.2}" opacity="${op}"${dashed ? ' stroke-dasharray="6 5"' : ''}/>`);
-      geo.p.forEach(([x, y]) => out.push(`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" opacity="${op}"/>`));
-    };
+    const add = (pts, color, active, dashed) => { out.push({ pts, color, active, dashed: !!dashed }); };
 
     state.issues.forEach(is => {
       const ir = rect('issue:' + is.id);
@@ -356,7 +363,95 @@ function initApp() {
       const ra = rect('issue:' + a), rb = rect('issue:' + b);
       if (ra && rb) add(side(ra, rb, -1), LINK_GRAY, !selected || selected === a || selected === b, true);
     });
-    svg.innerHTML = out.join('');
+    return out;
+  }
+
+  /* 画面の図を図形データとして取り出す（Excel出力用） */
+  function captureScene() {
+    const br = board.getBoundingClientRect();
+    const hex = css => {
+      const m = String(css).match(/rgba?\(([^)]+)\)/);
+      if (!m) return 'FFFFFF';
+      const v = m[1].split(',').map(x => parseFloat(x));
+      if (v.length > 3 && v[3] === 0) return null;
+      return v.slice(0, 3).map(n => Math.round(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+    };
+    const R = el => { const b = el.getBoundingClientRect(); return { x: b.left - br.left, y: b.top - br.top, w: b.width, h: b.height }; };
+    const shapes = [];
+    const S = (el, o) => { const r = R(el); if (r.w && r.h) shapes.push(Object.assign(r, o)); return r; };
+    const run = (t, sz, o) => Object.assign({ t, sz }, o || {});
+    const GRAY = '6B7684';
+
+    board.querySelectorAll('.col').forEach(el => S(el, { geom: 'roundRect', fill: 'FFFFFF', line: 'D6DBE3' }));
+    board.querySelectorAll('.col-title').forEach(el => {
+      const no = el.querySelector('.no');
+      S(no, { geom: 'ellipse', fill: '2F5597', anchor: 'ctr', align: 'ctr', inset: 0, paras: [[run(no.textContent, 9, { b: 1, color: 'FFFFFF' })]] });
+      const r = R(el), nr = R(no);
+      shapes.push({ x: nr.x + nr.w + 4, y: r.y - 2, w: r.w - nr.w - 4, h: r.h + 4, anchor: 'ctr', inset: 0, paras: [[run(el.textContent.replace(no.textContent, '').trim(), 11, { b: 1 })]] });
+    });
+    board.querySelectorAll('.sub-title').forEach(el => {
+      const r = R(el);
+      const t = (el.querySelector('span') || el).textContent.trim();
+      shapes.push({ x: r.x, y: r.y - 2, w: r.w, h: r.h + 4, anchor: 'ctr', inset: 0, paras: [[run(t, 8, { b: 1, color: GRAY })]] });
+    });
+    board.querySelectorAll('.cat').forEach(el => {
+      S(el, { geom: 'roundRect', fill: 'FAFBFC', line: 'D6DBE3' });
+      const head = el.querySelector('.cat-head');
+      const r = R(head);
+      shapes.push({ x: r.x, y: r.y, w: r.w - 64, h: r.h, anchor: 'ctr', paras: [[run(el.querySelector('.cat-title').textContent, 9.5, { b: 1 }), run('　' + el.querySelector('.cat-hint').textContent, 7, { color: GRAY })]] });
+    });
+    board.querySelectorAll('.note').forEach(el => {
+      const tags = [...el.querySelectorAll('.tag')].map(t => run(t.textContent + ' ', 7.5, { b: 1, color: hex(t.style.background) }));
+      const paras = [[run(el.querySelector('.note-text').textContent, 9)]];
+      if (tags.length) paras.push(tags);
+      S(el, { geom: 'roundRect', adj: 6000, fill: hex(getComputedStyle(el).backgroundColor), line: 'C9CED6', paras });
+    });
+    const goal = board.querySelector('#goalBox');
+    if (goal) {
+      const linked = state.issues.filter(is => is.goal);
+      const paras = [
+        [run('◎ 最重点目標', 10, { b: 1, color: 'A06A00' })],
+        [run(state.goal.text || '（未記入）', 9.5, { b: 1 })],
+        [run('設定の理由', 7.5, { color: GRAY })],
+        [run(state.goal.reason || '', 8.5)],
+      ];
+      if (linked.length) paras.push([run('つながっている課題：', 7.5, { color: GRAY }), ...linked.map(is => run('課題' + issueNo(is.id) + ' ', 8, { b: 1, color: colorOf(is).slice(1).toUpperCase() }))]);
+      S(goal, { geom: 'roundRect', adj: 5000, fill: 'FFFAF0', line: 'E8A400', lineW: 2, paras });
+    }
+    board.querySelectorAll('.issue').forEach(el => {
+      const is = issueById(el.dataset.node.slice(6));
+      if (!is) return;
+      const c = colorOf(is).slice(1).toUpperCase();
+      const r = S(el, { geom: 'rect', fill: 'FFFFFF', line: c, lineW: 1.5 });
+      shapes.push({ x: r.x, y: r.y, w: 8, h: r.h, geom: 'rect', fill: c });
+      const meta = el.querySelector('.issue-meta');
+      shapes.push({
+        x: r.x + 10, y: r.y, w: r.w - 12, h: r.h, paras: [
+          [run('課題' + issueNo(is.id), 8.5, { b: 1, color: c }), ...(is.goal ? [run('　◎最重点目標', 8, { b: 1, color: 'A06A00' })] : [])],
+          [run(is.text || '（内容未入力）', 10, { b: 1 })],
+          [run(meta ? meta.textContent : '', 7, { color: GRAY })],
+        ],
+      });
+    });
+    board.querySelectorAll('.grp').forEach(el => {
+      S(el, { geom: 'rect', fill: 'FFFFFF', line: 'D6DBE3' });
+      const head = el.querySelector('.grp-head');
+      const cnt = head.querySelector('.cnt');
+      const t = [...head.childNodes].filter(nd => nd.nodeType === 3).map(nd => nd.textContent).join('').trim();
+      S(head, { geom: 'rect', fill: hex(getComputedStyle(head).backgroundColor), anchor: 'ctr', paras: [[run(t, 9.5, { b: 1, color: 'FFFFFF' }), ...(cnt ? [run('　（' + cnt.textContent + '）', 8, { color: 'FFFFFF' })] : [])]] });
+    });
+    board.querySelectorAll('.item').forEach(el => {
+      const r = R(el);
+      shapes.push({ x: r.x, y: r.y, w: r.w - 22, h: r.h, anchor: 'ctr', paras: [[run(el.querySelector('.ino').textContent + ' ', 8, { color: GRAY }), run(el.querySelector('.itx').textContent, 8.5)]] });
+    });
+    board.querySelectorAll('.subj').forEach(el => {
+      const r = S(el, { geom: 'roundRect', adj: 10000, fill: 'FFFFFF', line: 'D6DBE3' });
+      shapes.push({ x: r.x, y: r.y, w: r.w - 40, h: r.h, anchor: 'ctr', paras: [[run(el.querySelector('.stx').textContent, 9)]] });
+    });
+    board.querySelectorAll('.dots i').forEach(el => S(el, { geom: 'ellipse', fill: hex(el.style.background) }));
+
+    const links = linkGeoms().map(g => ({ pts: g.pts, color: g.color.slice(1).toUpperCase(), dashed: g.dashed }));
+    return { width: board.scrollWidth, height: board.scrollHeight, shapes, links };
   }
 
   /* ---------- 編集ダイアログ ---------- */
@@ -632,15 +727,20 @@ function initApp() {
   window.addEventListener('afterprint', () => { document.body.classList.remove('printing'); drawLines(); });
 
   $('#btnExcel').addEventListener('click', () => {
-    try {
-      const bytes = buildWorkbook(state);
-      download(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), fileBase() + '.xlsx');
-      toast('Excelファイルを出力しました');
-    } catch (err) {
-      console.error(err);
-      alert('Excel出力でエラーが発生しました：' + err.message);
-    }
+    selected = null;
+    renderAll();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try {
+        const bytes = buildWorkbook(state, captureScene());
+        download(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), fileBase() + '.xlsx');
+        toast('Excelファイルを出力しました（1枚目のシートが関連図です）');
+      } catch (err) {
+        console.error(err);
+        alert('Excel出力でエラーが発生しました：' + err.message);
+      }
+    }));
   });
+  window.__kadaiExport = () => buildWorkbook(state, captureScene()); // 動作確認用
 
   /* ---------- 初期化 ---------- */
   function fitHint() { $('#hintbar').style.top = document.querySelector('.app-header').offsetHeight + 'px'; }
@@ -756,11 +856,12 @@ class XSheet {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
       + `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>`
-      + `<sheetViews><sheetView workbookViewId="0" zoomScale="100"/></sheetViews>`
+      + `<sheetViews><sheetView workbookViewId="0" zoomScale="${this.zoom || 100}"${this.noGrid ? ' showGridLines="0"' : ''}/></sheetViews>`
       + `<sheetFormatPr defaultRowHeight="18.75"/>`
       + `<cols>${cols}</cols><sheetData>${rows}</sheetData>${merges}`
       + `<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>`
-      + `<pageSetup paperSize="9" orientation="${this.portrait ? 'portrait' : 'landscape'}" fitToWidth="1" fitToHeight="0"/>`
+      + `<pageSetup paperSize="${this.paper || 9}" orientation="${this.portrait ? 'portrait' : 'landscape'}" fitToWidth="1" fitToHeight="${this.fitH || 0}"/>`
+      + (this.drawing ? '<drawing r:id="rId1"/>' : '')
       + `</worksheet>`;
   }
 }
@@ -949,19 +1050,120 @@ function zipStore(files) {
   return out;
 }
 
-function buildWorkbook(st) {
+/* --- 関連図シート（画面の図を図形で再現） --- */
+const DIAG = { pad: 16, head: 92, rowPx: 20, colPx: 72 };
+
+function diagramSheet(st, scene) {
+  const W = scene.width + DIAG.pad * 2, H = scene.height + DIAG.head + DIAG.pad;
+  const nCols = Math.ceil(W / DIAG.colPx) + 1;
+  const nRows = Math.ceil(H / DIAG.rowPx) + 2;
+  const sh = new XSheet('関連図', Array(nCols).fill(9.43));
+  sh.noGrid = true; sh.drawing = true; sh.paper = 8; sh.fitH = 1; sh.zoom = 80;
+  sh.portrait = W / H < 1.2;
+  for (let r = 1; r < nRows; r++) sh.fixH[r] = 15; // 15pt = 20px
+  for (let r = 1; r < nRows; r++) sh.set(r, 1, '', 0);
+  sh.box(nRows, 1, nRows, Math.min(nCols, 12), '※図形・線は移動や文字の修正ができます。印刷はA3・1ページに収まる設定です。', XS.small);
+  sh.printArea = `$A$1:$${colName(nCols)}$${nRows}`;
+  return sh;
+}
+
+function drawingXml(st, scene) {
+  const E = px => Math.max(0, Math.round(px * 9525));
+  const ox = DIAG.pad, oy = DIAG.head;
+  const FONT = '<a:latin typeface="游ゴシック"/><a:ea typeface="游ゴシック"/>';
+  let id = 1;
+  const out = [];
+  const fillXml = c => (c ? `<a:solidFill><a:srgbClr val="${c}"/></a:solidFill>` : '<a:noFill/>');
+  const runXml = r => `<a:r><a:rPr lang="ja-JP" altLang="en-US" sz="${Math.round(r.sz * 100)}" b="${r.b ? 1 : 0}" dirty="0"><a:solidFill><a:srgbClr val="${r.color || '23303F'}"/></a:solidFill>${FONT}</a:rPr><a:t>${xmlEsc(r.t)}</a:t></a:r>`;
+
+  function txBody(s) {
+    const paras = [];
+    (s.paras || []).forEach(p => {
+      let cur = [];
+      paras.push(cur);
+      p.forEach(r => {
+        String(r.t ?? '').split('\n').forEach((piece, i) => {
+          if (i > 0) { cur = []; paras.push(cur); }
+          if (piece) cur.push(Object.assign({}, r, { t: piece }));
+        });
+      });
+    });
+    const ins = s.inset == null ? 5 : s.inset;
+    const ps = paras.map(p => {
+      const sz = p.length ? p[0].sz : 8;
+      return `<a:p><a:pPr algn="${s.align || 'l'}"/>${p.map(runXml).join('')}<a:endParaRPr lang="ja-JP" altLang="en-US" sz="${Math.round(sz * 100)}" dirty="0">${FONT}</a:endParaRPr></a:p>`;
+    }).join('');
+    return `<xdr:txBody><a:bodyPr vertOverflow="overflow" horzOverflow="overflow" wrap="square" lIns="${E(ins)}" tIns="${E(ins * 0.6)}" rIns="${E(ins)}" bIns="${E(ins * 0.4)}" rtlCol="0" anchor="${s.anchor || 't'}"><a:noAutofit/></a:bodyPr><a:lstStyle/>${ps}</xdr:txBody>`;
+  }
+
+  function shape(s) {
+    const n = ++id;
+    const geom = s.geom || 'rect';
+    const av = geom === 'roundRect' ? `<a:avLst><a:gd name="adj" fmla="val ${s.adj || 4000}"/></a:avLst>` : '<a:avLst/>';
+    const ln = s.line ? `<a:ln w="${E(s.lineW || 1)}"><a:solidFill><a:srgbClr val="${s.line}"/></a:solidFill></a:ln>` : '<a:ln><a:noFill/></a:ln>';
+    const x = s.x + ox, y = s.y + oy, w = Math.max(1, s.w), h = Math.max(1, s.h);
+    out.push(`<xdr:absoluteAnchor><xdr:pos x="${E(x)}" y="${E(y)}"/><xdr:ext cx="${E(w)}" cy="${E(h)}"/>`
+      + `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${n}" name="Shape ${n}"/><xdr:cNvSpPr/></xdr:nvSpPr>`
+      + `<xdr:spPr><a:xfrm><a:off x="${E(x)}" y="${E(y)}"/><a:ext cx="${E(w)}" cy="${E(h)}"/></a:xfrm><a:prstGeom prst="${geom}">${av}</a:prstGeom>${fillXml(s.fill)}${ln}</xdr:spPr>`
+      + (s.paras ? txBody(s) : '')
+      + `</xdr:sp><xdr:clientData/></xdr:absoluteAnchor>`);
+  }
+
+  function curve(l) {
+    const n = ++id;
+    const p = l.pts.map((v, i) => v + (i % 2 ? oy : ox));
+    const xs = p.filter((v, i) => i % 2 === 0), ys = p.filter((v, i) => i % 2 === 1);
+    const minX = Math.min(...xs), minY = Math.min(...ys);
+    const w = Math.max(1, Math.max(...xs) - minX), h = Math.max(1, Math.max(...ys) - minY);
+    const pt = i => `<a:pt x="${E(p[i] - minX)}" y="${E(p[i + 1] - minY)}"/>`;
+    out.push(`<xdr:absoluteAnchor><xdr:pos x="${E(minX)}" y="${E(minY)}"/><xdr:ext cx="${E(w)}" cy="${E(h)}"/>`
+      + `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${n}" name="Line ${n}"/><xdr:cNvSpPr/></xdr:nvSpPr>`
+      + `<xdr:spPr><a:xfrm><a:off x="${E(minX)}" y="${E(minY)}"/><a:ext cx="${E(w)}" cy="${E(h)}"/></a:xfrm>`
+      + `<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/><a:pathLst><a:path w="${E(w)}" h="${E(h)}" fill="none">`
+      + `<a:moveTo>${pt(0)}</a:moveTo><a:cubicBezTo>${pt(2)}${pt(4)}${pt(6)}</a:cubicBezTo></a:path></a:pathLst></a:custGeom>`
+      + `<a:noFill/><a:ln w="${E(2.2)}" cap="rnd"><a:solidFill><a:srgbClr val="${l.color}"><a:alpha val="85000"/></a:srgbClr></a:solidFill>${l.dashed ? '<a:prstDash val="dash"/>' : ''}<a:round/></a:ln></xdr:spPr>`
+      + `</xdr:sp><xdr:clientData/></xdr:absoluteAnchor>`);
+    [[p[0], p[1]], [p[6], p[7]]].forEach(([cx, cy]) => shape({ x: cx - ox - 3.5, y: cy - oy - 3.5, w: 7, h: 7, geom: 'ellipse', fill: l.color }));
+  }
+
+  // 見出し（タイトル・児童生徒情報）
+  const s = st.student;
+  const dateJa = s.date ? s.date.replace(/^(\d+)-(\d+)-(\d+)$/, (m, y, mo, d) => `${y}年${+mo}月${+d}日`) : '';
+  const info = [['氏名', s.name], ['学部・学年・組', s.grade], ['作成日', dateJa], ['作成者', s.author]].map(([k, v]) => `${k}：${v || '　　　　'}`).join('　　');
+  const wish = [['本人の願い', s.wishSelf], ['保護者の願い', s.wishParent]].filter(([, v]) => v).map(([k, v]) => `${k}：${v}`).join('　／　');
+  const headParas = [[{ t: '課題関連図（流れ図）', sz: 16, b: 1, color: '2F5597' }], [{ t: info, sz: 9.5 }]];
+  if (wish) headParas.push([{ t: wish, sz: 8.5, color: '444444' }]);
+  shape({ x: 0, y: -DIAG.head + 4, w: scene.width, h: DIAG.head - 10, paras: headParas, inset: 2 });
+
+  scene.shapes.forEach(shape);
+  scene.links.forEach(curve);
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${out.join('')}</xdr:wsDr>`;
+}
+
+function buildWorkbook(st, scene) {
   const sheets = buildSheets(st);
+  if (scene) sheets.unshift(diagramSheet(st, scene));
   const files = [];
   files.push({ name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` });
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((s, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${scene ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' : ''}</Types>` });
   files.push({ name: '_rels/.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` });
   files.push({ name: 'xl/workbook.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>` });
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>${(() => {
+    const dn = sheets.map((s, i) => (s.printArea ? `<definedName name="_xlnm.Print_Area" localSheetId="${i}">'${xmlEsc(s.name)}'!${s.printArea}</definedName>` : '')).join('');
+    return dn ? `<definedNames>${dn}</definedNames>` : '';
+  })()}</workbook>` });
   files.push({ name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` });
   files.push({ name: 'xl/styles.xml', data: stylesXml() });
   sheets.forEach((s, i) => files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, data: s.toXml() }));
+  if (scene) {
+    files.push({ name: 'xl/worksheets/_rels/sheet1.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>` });
+    files.push({ name: 'xl/drawings/drawing1.xml', data: drawingXml(st, scene) });
+  }
   return zipStore(files);
 }
 
